@@ -1,10 +1,10 @@
 use image::{DynamicImage, GenericImage, GenericImageView, Luma, Pixel};
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::{BTreeSet, HashSet, VecDeque},
     println,
 };
 
-const THRESHOLD: u8 = 10;
+const THRESHOLD: u8 = 25;
 
 #[derive(Clone)]
 enum DirectionToFollow {
@@ -30,7 +30,7 @@ impl DirectionToFollow {
 }
 
 fn main() {
-    let image = image::open("teste.jpg").expect("falha ao abrir a imagem");
+    let image = image::open("image 2.webp").expect("falha ao abrir a imagem");
 
     // primeiro vamos jogar sementes na imagem. Pra isso, vou "dividir" a imagem em 9 blocos e
     // colocar uma semente no centro de cada um desses blocos.
@@ -62,14 +62,9 @@ fn main() {
         // now we perform a depth-first search to visit every pixel that has an intensity close to the `seed`'s.
         let mut visited_pixels = HashSet::<(u32, u32)>::new();
 
-        explore_axis(None, seed, &mut visited_pixels, &image);
+        explore_axis_non_recursively(seed, &mut visited_pixels, &mut missing_pixels, &image);
 
         visited_pixels.insert(seed);
-        println!("Limpando os pixels restantes.");
-        // this is faster than HashSet::retain & cheaper than recreating the set
-        for pixel in &visited_pixels {
-            missing_pixels.remove(pixel);
-        }
         segments.insert(visited_pixels.into_iter().collect::<BTreeSet<_>>());
     }
 
@@ -83,12 +78,9 @@ fn main() {
 
         let mut visited_pixels = HashSet::<(u32, u32)>::new();
 
-        explore_axis(None, pixel, &mut visited_pixels, &image);
+        explore_axis_non_recursively(pixel, &mut visited_pixels, &mut missing_pixels, &image);
 
         visited_pixels.insert(pixel);
-        for pixel in &visited_pixels {
-            missing_pixels.remove(pixel);
-        }
         segments.insert(visited_pixels.into_iter().collect::<BTreeSet<_>>());
     }
 
@@ -103,6 +95,53 @@ fn main() {
     segments_image
         .save("resultado.jpg")
         .expect("Não foi possível salvar a imagem.");
+}
+
+fn explore_axis_non_recursively(
+    initial_pos: (u32, u32),
+    visited_pixels: &mut HashSet<(u32, u32)>,
+    missing_pixels: &mut HashSet<(u32, u32)>,
+    image: &DynamicImage,
+) {
+    let mut queue = VecDeque::<(u32, u32)>::new();
+    queue.push_back(initial_pos);
+
+    while let Some(prev_pixel) = queue.pop_front() {
+        if !visited_pixels.contains(&prev_pixel) {
+            let mut direction = Some(DirectionToFollow::new());
+            while let Some(new_direction) = direction {
+                let next_pixel = match new_direction {
+                    DirectionToFollow::Above => (prev_pixel.0 as i64, prev_pixel.1 as i64 - 1),
+                    DirectionToFollow::Down => (prev_pixel.0 as i64, prev_pixel.1 as i64 + 1),
+                    DirectionToFollow::Right => (prev_pixel.0 as i64 + 1, prev_pixel.1 as i64),
+                    DirectionToFollow::Left => (prev_pixel.0 as i64 - 1, prev_pixel.1 as i64),
+                };
+
+                let pixel_is_out_of_bounds = next_pixel.0 < 0
+                    || next_pixel.0 >= image.width() as i64
+                    || next_pixel.1 < 0
+                    || next_pixel.1 >= image.height() as i64;
+
+                if !pixel_is_out_of_bounds {
+                    let pixel = (next_pixel.0 as u32, next_pixel.1 as u32);
+                    let previous_pixel_intensity =
+                        image.get_pixel(prev_pixel.0, prev_pixel.1).to_luma().0[0];
+                    let current_pixel_intensity = image.get_pixel(pixel.0, pixel.1).to_luma().0[0];
+
+                    if previous_pixel_intensity.abs_diff(current_pixel_intensity) <= THRESHOLD
+                        && !visited_pixels.contains(&pixel)
+                    {
+                        queue.push_back(pixel);
+                    }
+                }
+
+                direction = new_direction.next();
+            }
+        }
+
+        visited_pixels.insert(prev_pixel);
+        missing_pixels.remove(&prev_pixel);
+    }
 }
 
 fn explore_axis(
