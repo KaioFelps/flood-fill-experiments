@@ -4,7 +4,7 @@ use std::{
     println,
 };
 
-const THRESHOLD: u8 = 25;
+const THRESHOLD: u8 = 5;
 
 #[derive(Clone)]
 enum DirectionToFollow {
