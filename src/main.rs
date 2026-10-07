@@ -1,8 +1,14 @@
 use image::{DynamicImage, GenericImage, GenericImageView, Luma, Pixel, Rgba};
-use std::collections::{BTreeSet, HashSet, VecDeque};
+use std::{
+    collections::{BTreeSet, HashSet, VecDeque},
+    thread::{JoinHandle, spawn},
+};
 
 const THRESHOLD: u8 = 5;
-const EUCLIDEAN_DISTANCE_THRESHOLD: f64 = 0.02;
+const EUCLIDEAN_DISTANCE_THRESHOLD: f64 = 0.030;
+// weights for lightning, a, and b oklab channels
+// obtained from many attempts...
+const OKLAB_WEIGHTS: [f64; 3] = [0.7, 1.0, 1.0];
 
 #[derive(Clone)]
 enum DirectionToFollow {
@@ -28,10 +34,36 @@ impl DirectionToFollow {
 }
 
 fn main() {
-    // let image = image::open("teste.jpg").expect("falha ao abrir a imagem");
-    let image = image::open("image 2.webp").expect("falha ao abrir a imagem");
-    // let image = image::open("imagem 3.png").expect("falha ao abrir a imagem");
+    let images = [
+        ["imagem 3.png", "imagem 3.out.jpg"],
+        ["teste.jpg", "teste.out.jpg"],
+        ["image 2.webp", "image 2.out.jpg"],
+    ];
 
+    let mut handlers = Vec::<JoinHandle<()>>::new();
+
+    for image in images {
+        println!("Spawnando pra imagem \"{}\".", image[0]);
+
+        let handle = spawn(move || {
+            segment(image[0], image[1]);
+        });
+
+        handlers.push(handle);
+    }
+
+    for (index, handler) in handlers.into_iter().enumerate() {
+        if let Err(err) = handler.join() {
+            println!(
+                "processamento pra imagem \"{}\" deu erro: {err:#?}",
+                images[index][0]
+            );
+        }
+    }
+}
+
+fn segment(input: &str, output: &str) {
+    let image = image::open(input).expect("falha ao abrir a imagem");
     // primeiro vamos jogar sementes na imagem. Pra isso, vou "dividir" a imagem em 9 blocos e
     // colocar uma semente no centro de cada um desses blocos.
     // cada semente está em uma layer diferente, então, posteriormente, sementes que cobrirem
@@ -93,7 +125,7 @@ fn main() {
         }
     }
     segments_image
-        .save("resultado.jpg")
+        .save(output)
         .expect("Não foi possível salvar a imagem.");
 }
 
@@ -133,11 +165,9 @@ fn are_pixels_close(a: &Rgba<u8>, b: &Rgba<u8>) -> bool {
     let a = to_oklab(a);
     let b = to_oklab(b);
 
-    // weights for lightning, a, and b oklab channels
-    let weights = [0.5, 1., 1.];
-    let euclidean_distance = (weights[0] * (a[0] - b[0]).powi(2)
-        + weights[1] * (a[1] - b[1]).powi(2)
-        + weights[2] * (a[2] - b[2]).powi(2))
+    let euclidean_distance = (OKLAB_WEIGHTS[0] * (a[0] - b[0]).powi(2)
+        + OKLAB_WEIGHTS[1] * (a[1] - b[1]).powi(2)
+        + OKLAB_WEIGHTS[2] * (a[2] - b[2]).powi(2))
     .sqrt();
 
     euclidean_distance <= EUCLIDEAN_DISTANCE_THRESHOLD
