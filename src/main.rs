@@ -1,10 +1,8 @@
-use image::{DynamicImage, GenericImage, GenericImageView, Luma, Pixel};
-use std::{
-    collections::{BTreeSet, HashSet, VecDeque},
-    println,
-};
+use image::{DynamicImage, GenericImage, GenericImageView, Luma, Pixel, Rgba};
+use std::collections::{BTreeSet, HashSet, VecDeque};
 
 const THRESHOLD: u8 = 5;
+const EUCLIDEAN_DISTANCE_THRESHOLD: f64 = 0.02;
 
 #[derive(Clone)]
 enum DirectionToFollow {
@@ -30,7 +28,9 @@ impl DirectionToFollow {
 }
 
 fn main() {
+    // let image = image::open("teste.jpg").expect("falha ao abrir a imagem");
     let image = image::open("image 2.webp").expect("falha ao abrir a imagem");
+    // let image = image::open("imagem 3.png").expect("falha ao abrir a imagem");
 
     // primeiro vamos jogar sementes na imagem. Pra isso, vou "dividir" a imagem em 9 blocos e
     // colocar uma semente no centro de cada um desses blocos.
@@ -85,9 +85,9 @@ fn main() {
     }
 
     let mut segments_image = DynamicImage::new_luma8(image.width(), image.height());
-    let intensity_slice = 255u8 / segments.len() as u8;
+    let total_segments = segments.len().max(1);
     for (index, segment) in segments.into_iter().enumerate() {
-        let intensity = (index * intensity_slice as usize) as u8;
+        let intensity = ((index * 255) / total_segments) as u8;
         for (x, y) in segment {
             segments_image.put_pixel(x, y, Luma([intensity]).to_rgba());
         }
@@ -95,6 +95,52 @@ fn main() {
     segments_image
         .save("resultado.jpg")
         .expect("Não foi possível salvar a imagem.");
+}
+
+fn to_oklab(pixel: &Rgba<u8>) -> [f64; 3] {
+    let mut channels: [f64; 3] = [0.0, 0.0, 0.0];
+    let rgb_channels = pixel.0;
+    for i in 0..3 {
+        let channel = rgb_channels[i];
+        let normalized_val = channel as f32 / 255.0;
+        let clinear = if normalized_val <= 0.04045 {
+            normalized_val as f64 / 12.92f64
+        } else {
+            ((normalized_val as f64 + 0.055f64) / 1.055f64).powf(2.4f64)
+        };
+        channels[i] = clinear;
+    }
+
+    let l_space =
+        0.4122214708 * channels[0] + 0.5363325363 * channels[1] + 0.0514459929 * channels[2];
+    let m_space =
+        0.2119034982 * channels[0] + 0.6806995451 * channels[1] + 0.1073969566 * channels[2];
+    let s_space =
+        0.0883024619 * channels[0] + 0.2817188376 * channels[1] + 0.6299787005 * channels[2];
+
+    let l_root = l_space.signum() * l_space.abs().powf(1.0 / 3.0);
+    let m_root = m_space.signum() * m_space.abs().powf(1.0 / 3.0);
+    let s_root = s_space.signum() * s_space.abs().powf(1.0 / 3.0);
+
+    let lightness = 0.2104542553 * l_root + 0.7936177850 * m_root - 0.0040720468 * s_root;
+    let a = 1.9779984951 * l_root - 2.4285922050 * m_root + 0.4505937099 * s_root;
+    let b = 0.0259040371 * l_root + 0.7827717662 * m_root - 0.8086757660 * s_root;
+
+    [lightness, a, b]
+}
+
+fn are_pixels_close(a: &Rgba<u8>, b: &Rgba<u8>) -> bool {
+    let a = to_oklab(a);
+    let b = to_oklab(b);
+
+    // weights for lightning, a, and b oklab channels
+    let weights = [0.5, 1., 1.];
+    let euclidean_distance = (weights[0] * (a[0] - b[0]).powi(2)
+        + weights[1] * (a[1] - b[1]).powi(2)
+        + weights[2] * (a[2] - b[2]).powi(2))
+    .sqrt();
+
+    euclidean_distance <= EUCLIDEAN_DISTANCE_THRESHOLD
 }
 
 fn explore_axis_non_recursively(
@@ -124,13 +170,12 @@ fn explore_axis_non_recursively(
 
                 if !pixel_is_out_of_bounds {
                     let pixel = (next_pixel.0 as u32, next_pixel.1 as u32);
-                    let previous_pixel_intensity =
-                        image.get_pixel(prev_pixel.0, prev_pixel.1).to_luma().0[0];
-                    let current_pixel_intensity = image.get_pixel(pixel.0, pixel.1).to_luma().0[0];
+                    let are_similar = are_pixels_close(
+                        &image.get_pixel(prev_pixel.0, prev_pixel.1).to_rgba(),
+                        &image.get_pixel(pixel.0, pixel.1).to_rgba(),
+                    );
 
-                    if previous_pixel_intensity.abs_diff(current_pixel_intensity) <= THRESHOLD
-                        && !visited_pixels.contains(&pixel)
-                    {
+                    if are_similar && !visited_pixels.contains(&pixel) {
                         queue.push_back(pixel);
                     }
                 }
